@@ -46,7 +46,7 @@
 </style>
 
 <main>
-  <h1>Enter a number and lets find out if its a prime!</h1>
+  <h1>Enter your number and lets find out if its a prime!</h1>
   <input type="text" bind:value={number} />
   <button type="button" on:click={send}>Lets finds out!</button>
   {#if showAnswer}
