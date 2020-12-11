@@ -1,0 +1,65 @@
+name: Build Docker Image And Push To Packages
+
+on:
+  push:
+    # Publish `master` as Docker `latest` image.
+    branches:
+      - master
+
+env:
+  IMAGE_NAME: simple-docker-frontend
+  DOCKER_IMAGE_URL: docker.pkg.github.com/christheoreo/simple-docker-frontend/simple-docker-frontend:latest
+
+jobs:
+
+  # Push image to GitHub Packages.
+  # See also https://docs.docker.com/docker-hub/builds/
+  build:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+
+    steps:
+      - uses: actions/checkout@v2
+      
+      - name: Create .env file
+        run: echo API_URL=${{ secrets.API_URL }} > .env 
+
+      - name: Build image
+        run: docker build . --file Dockerfile --tag $IMAGE_NAME
+
+      - name: Log into registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login docker.pkg.github.com -u ${{ github.actor }} --password-stdin
+
+      - name: Push image
+        run: |
+          IMAGE_ID=docker.pkg.github.com/${{ github.repository }}/$IMAGE_NAME
+          # Change all uppercase to lowercase
+          IMAGE_ID=$(echo $IMAGE_ID | tr '[A-Z]' '[a-z]')
+          # Strip git ref prefix from version
+          VERSION=$(echo "${{ github.ref }}" | sed -e 's,.*/\(.*\),\1,')
+          # Strip "v" prefix from tag name
+          [[ "${{ github.ref }}" == "refs/tags/"* ]] && VERSION=$(echo $VERSION | sed -e 's/^v//')
+          # Use Docker `latest` tag convention
+          [ "$VERSION" == "master" ] && VERSION=latest
+          echo IMAGE_ID=$IMAGE_ID
+          echo VERSION=$VERSION
+          docker tag $IMAGE_NAME $IMAGE_ID:$VERSION
+          docker push $IMAGE_ID:$VERSION
+  deploy:
+     runs-on: ubuntu-latest
+     needs: [build]
+     steps:      
+       - name: executing remote ssh commands using password
+         uses: appleboy/ssh-action@master
+         with:
+           host: ${{ secrets.HOST }}
+           username: ${{ secrets.USERNAME }}
+           port: ${{ secrets.PORT }}
+           key:  ${{ secrets.SSH_PRIVATE_KEY }}
+           envs:  IMAGE_NAME,DOCKER_IMAGE_URL
+           script: |
+             echo "${{ secrets.GITHUB_TOKEN }}" | docker login docker.pkg.github.com -u ${{ github.actor }} --password-stdin             
+             [ "$(docker ps -a | grep $IMAGE_NAME)" ] && docker stop $IMAGE_NAME && docker rm $IMAGE_NAME
+             [ "$(docker image ls -a --no-trunc | grep $IMAGE_NAME)" ] && docker rmi $(docker image ls -q $DOCKER_IMAGE_URL) || true
+             docker pull  $DOCKER_IMAGE_URL
+             docker run -d -p 8081:80 --name $IMAGE_NAME $DOCKER_IMAGE_URL
